@@ -4,3 +4,7 @@
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
 venv/
+__pycache__/
+*.pyc
+app/expense.db
+.vscode/

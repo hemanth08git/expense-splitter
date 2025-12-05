@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from non_crud_lib.settlement import calculate_settlement
+from non_crud_lib.currency import convert_currency
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
@@ -9,9 +10,14 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "expense.db")
 
 
 def init_db():
+    """
+    Initialise the SQLite database with the required tables.
+    This runs once when the database file does not yet exist.
+    """
     if not os.path.exists(DB_PATH):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+
         # Users table
         c.execute(
             """CREATE TABLE users (
@@ -20,6 +26,7 @@ def init_db():
                    password TEXT
                )"""
         )
+
         # Groups table
         c.execute(
             """CREATE TABLE groups (
@@ -28,6 +35,7 @@ def init_db():
                    owner INTEGER
                )"""
         )
+
         # Group membership (many-to-many)
         c.execute(
             """CREATE TABLE group_users (
@@ -36,6 +44,7 @@ def init_db():
                    user_id INTEGER
                )"""
         )
+
         # Expenses table
         c.execute(
             """CREATE TABLE expenses (
@@ -46,11 +55,16 @@ def init_db():
                    description TEXT
                )"""
         )
+
         conn.commit()
         conn.close()
 
 
 def get_db_connection():
+    """
+    Helper to open a new database connection.
+    Call conn.close() after use.
+    """
     conn = sqlite3.connect(DB_PATH)
     return conn
 
@@ -60,8 +74,18 @@ def index():
     return jsonify({"status": "running"})
 
 
+@app.route("/home")
+def home():
+    """
+    Simple HTML page for demo purposes.
+    Requires app/templates/index.html.
+    """
+    return render_template("index.html")
 
+
+# --------------------------
 # User management (CRUD)
+# --------------------------
 
 @app.route("/user/register", methods=["POST"])
 def register_user():
@@ -112,8 +136,9 @@ def login_user():
         return jsonify({"error": "invalid credentials"}), 401
 
 
-
+# --------------------------
 # Group management
+# --------------------------
 
 @app.route("/group", methods=["POST"])
 def create_group():
@@ -128,8 +153,13 @@ def create_group():
     c = conn.cursor()
     c.execute("INSERT INTO groups (name, owner) VALUES (?, ?)", (name, owner))
     group_id = c.lastrowid
+
     # add owner as group member
-    c.execute("INSERT INTO group_users (group_id, user_id) VALUES (?, ?)", (group_id, owner))
+    c.execute(
+        "INSERT INTO group_users (group_id, user_id) VALUES (?, ?)",
+        (group_id, owner),
+    )
+
     conn.commit()
     conn.close()
     return jsonify({"status": "group created", "group_id": group_id}), 201
@@ -159,6 +189,7 @@ def add_user_to_group(group_id):
 
     conn = get_db_connection()
     c = conn.cursor()
+
     # ensure group exists
     c.execute("SELECT id FROM groups WHERE id = ?", (group_id,))
     if not c.fetchone():
@@ -167,13 +198,17 @@ def add_user_to_group(group_id):
 
     # avoid duplicate membership
     c.execute(
-        "SELECT id FROM group_users WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        "SELECT id FROM group_users WHERE group_id = ? AND user_id = ?",
+        (group_id, user_id),
     )
     if c.fetchone():
         conn.close()
         return jsonify({"status": "user already in group"}), 200
 
-    c.execute("INSERT INTO group_users (group_id, user_id) VALUES (?, ?)", (group_id, user_id))
+    c.execute(
+        "INSERT INTO group_users (group_id, user_id) VALUES (?, ?)",
+        (group_id, user_id),
+    )
     conn.commit()
     conn.close()
     return jsonify({"status": "user added to group"}), 201
@@ -184,7 +219,12 @@ def group_members(group_id):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "SELECT u.id, u.email FROM users u JOIN group_users gu ON u.id = gu.user_id WHERE gu.group_id = ?",
+        """
+        SELECT u.id, u.email
+        FROM users u
+        JOIN group_users gu ON u.id = gu.user_id
+        WHERE gu.group_id = ?
+        """,
         (group_id,),
     )
     rows = c.fetchall()
@@ -193,8 +233,9 @@ def group_members(group_id):
     return jsonify(members)
 
 
-
+# --------------------------
 # Expense management (CRUD)
+# --------------------------
 
 @app.route("/expense", methods=["POST"])
 def create_expense():
@@ -207,7 +248,12 @@ def create_expense():
     c = conn.cursor()
     c.execute(
         "INSERT INTO expenses (group_id, payer, amount, description) VALUES (?, ?, ?, ?)",
-        (data["group_id"], data["payer"], float(data["amount"]), data.get("description", "")),
+        (
+            data["group_id"],
+            data["payer"],
+            float(data["amount"]),
+            data.get("description", ""),
+        ),
     )
     expense_id = c.lastrowid
     conn.commit()
@@ -226,11 +272,19 @@ def list_expenses():
             (group_id,),
         )
     else:
-        c.execute("SELECT id, group_id, payer, amount, description FROM expenses")
+        c.execute(
+            "SELECT id, group_id, payer, amount, description FROM expenses"
+        )
     rows = c.fetchall()
     conn.close()
     expenses = [
-        {"id": r[0], "group_id": r[1], "payer": r[2], "amount": r[3], "description": r[4]}
+        {
+            "id": r[0],
+            "group_id": r[1],
+            "payer": r[2],
+            "amount": r[3],
+            "description": r[4],
+        }
         for r in rows
     ]
     return jsonify(expenses)
@@ -240,12 +294,21 @@ def list_expenses():
 def get_expense(expense_id):
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT id, group_id, payer, amount, description FROM expenses WHERE id = ?", (expense_id,))
+    c.execute(
+        "SELECT id, group_id, payer, amount, description FROM expenses WHERE id = ?",
+        (expense_id,),
+    )
     row = c.fetchone()
     conn.close()
     if not row:
         return jsonify({"error": "expense not found"}), 404
-    expense = {"id": row[0], "group_id": row[1], "payer": row[2], "amount": row[3], "description": row[4]}
+    expense = {
+        "id": row[0],
+        "group_id": row[1],
+        "payer": row[2],
+        "amount": row[3],
+        "description": row[4],
+    }
     return jsonify(expense)
 
 
@@ -282,18 +345,53 @@ def delete_expense(expense_id):
     return jsonify({"status": "deleted"})
 
 
-
-# Settlement endpoint (non-CRUD)
+# --------------------------
+# Non-CRUD: Settlement
+# --------------------------
 
 @app.route("/settle/<int:group_id>", methods=["GET"])
 def settle(group_id):
+    """
+    Non-CRUD operation that calculates how much each user
+    in a group owes or is owed based on recorded expenses.
+    """
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT payer, amount FROM expenses WHERE group_id = ?", (group_id,))
+    c.execute(
+        "SELECT payer, amount FROM expenses WHERE group_id = ?",
+        (group_id,),
+    )
     rows = c.fetchall()
     conn.close()
     result = calculate_settlement(rows)
     return jsonify(result)
+
+
+# --------------------------
+# Non-CRUD: Currency conversion
+# --------------------------
+
+@app.route("/currency/convert", methods=["GET"])
+def currency_convert():
+    """
+    Non-CRUD operation using a separate library function.
+    Example:
+        /currency/convert?amount=10&rate=1.1
+    """
+    amount = request.args.get("amount")
+    rate = request.args.get("rate")
+
+    converted = convert_currency(amount, rate)
+    if converted is None:
+        return jsonify({"error": "invalid amount or rate"}), 400
+
+    return jsonify(
+        {
+            "amount": float(amount),
+            "rate": float(rate),
+            "converted": converted,
+        }
+    )
 
 
 if __name__ == "__main__":
