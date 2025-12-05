@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 app/expense.db
 .vscode/
+.env

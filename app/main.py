@@ -4,6 +4,18 @@ from non_crud_lib.currency import convert_currency
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
+import smtplib
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+
+# Load environment variables from ../.env (project root)
+ENV_PATH = os.path.join(os.path.dirname(__file__), "..", ".env")
+load_dotenv(ENV_PATH)
+
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASS = os.getenv("EMAIL_PASS")
 
 app = Flask(__name__)
 DB_PATH = os.path.join(os.path.dirname(__file__), "expense.db")
@@ -304,10 +316,10 @@ def get_expense(expense_id):
         return jsonify({"error": "expense not found"}), 404
     expense = {
         "id": row[0],
-        "group_id": row[1],
-        "payer": row[2],
-        "amount": row[3],
-        "description": row[4],
+            "group_id": row[1],
+            "payer": row[2],
+            "amount": row[3],
+            "description": row[4],
     }
     return jsonify(expense)
 
@@ -392,6 +404,49 @@ def currency_convert():
             "converted": converted,
         }
     )
+
+
+# --------------------------
+# Non-CRUD: Email notification
+# --------------------------
+
+@app.route("/notify/email", methods=["POST"])
+def send_email_notification():
+    """
+    Send a simple email notification.
+    JSON body:
+    {
+        "to": "receiver@example.com",
+        "subject": "Settlement Update",
+        "message": "Your group settlement is ready."
+    }
+    """
+    if not EMAIL_USER or not EMAIL_PASS or not SMTP_SERVER:
+        return jsonify({"error": "Email service not configured on server"}), 500
+
+    data = request.get_json() or {}
+    to_addr = data.get("to")
+    subject = data.get("subject", "Notification")
+    message = data.get("message", "No message provided")
+
+    if not to_addr:
+        return jsonify({"error": "Recipient email required"}), 400
+
+    try:
+        msg = MIMEText(message)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_USER
+        msg["To"] = to_addr
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
+
+        return jsonify({"status": "email sent"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
